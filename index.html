@@ -101,7 +101,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-b);min-height
 
 /* TASK BLOCKS */
 .tblock{position:absolute;border-radius:10px;padding:5px 8px;cursor:pointer;overflow:hidden;display:flex;align-items:flex-start;gap:5px;border-left-width:3px;border-left-style:solid;border-top:1px solid rgba(255,255,255,.1);border-right:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);z-index:5;user-select:none;}
-.tblock.dragging{opacity:.7;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.5);transform:scale(1.02);}
 .tblock.done-block{opacity:.45;}
 .tblock.done-block .tbtitle{text-decoration:line-through;}
 .tbbody{flex:1;min-width:0;}
@@ -241,8 +240,8 @@ select.inp{appearance:none;}
 <div class="topbar">
   <button class="btn-ic" id="btnBack" onclick="goBack()" style="display:none">←</button>
   <div class="topbar-title" id="ttitle">Расписание</div>
-  <button class="btn-ic" onclick="openModal('mTemplates')" title="Шаблоны">📋</button>
-  <button class="btn-ic" onclick="openModal('mSettings')">⚙️</button>
+  <button class="btn-ic" id="topBtnTpl" onclick="openModal('mTemplates')" title="Шаблоны" style="display:none">📋</button>
+  <button class="btn-ic" id="topBtnCfg" onclick="openModal('mSettings')" style="display:none">⚙️</button>
 </div>
 
 <!-- MONTH -->
@@ -299,6 +298,8 @@ select.inp{appearance:none;}
       <div class="ai-chip" onclick="sendChip(this)">📅 Составь план на неделю</div>
       <div class="ai-chip" onclick="sendChip(this)">📊 Проанализируй продуктивность</div>
       <div class="ai-chip" onclick="sendChip(this)">🧹 Очисти сегодняшний день</div>
+      <div class="ai-chip" onclick="debugTasks()" style="border-color:var(--warning);color:var(--warning)">🔍 Что в расписании?</div>
+      <div class="ai-chip" onclick="clearAIHistory()" style="border-color:var(--danger);color:var(--danger)">🗑️ Сбросить чат</div>
     </div>
     <div class="img-previews" id="imgPreviews"></div>
     <input type="file" id="imgFileInput" accept="image/*" multiple style="display:none" onchange="onImgAttach(this)">
@@ -661,7 +662,6 @@ function rGrid(){
     const cat=CATS[task.category||'other'];
     bl.innerHTML=`<div class="tchk${task.done?' ck':''}" onclick="event.stopPropagation();togT('${key}',${idx},'${task._recurring?'1':'0'}',${JSON.stringify(task._origKey||'').replace(/"/g,"'")})">${task.done?'✓':''}</div><div class="tbbody"><div class="tbtitle">${task.icon||'📝'} ${esc(task.text)}${task._recurring?' 🔄':''}</div><div class="tbtime">${task.startTime||'?'} – ${task.endTime||'?'} · ${cat.icon}</div></div>`;
     // Drag
-    setupDrag(bl, task, key, idx, sm, total, gh, PPM);
     bl.onclick=()=>openDet(key,idx,task);grid.appendChild(bl);
   });
   const wrap=document.getElementById('tgwrap');
@@ -669,46 +669,7 @@ function rGrid(){
   setTimeout(()=>wrap.scrollTop=sc,50);
 }
 
-// ── DRAG & DROP ──
-function setupDrag(el, task, key, idx, sm, total, gh, PPM) {
-  if(task._recurring)return; // can't drag recurring
-  let startY=0,startTop=0,dragging=false;
-  const onStart=(e)=>{
-    const clientY=e.touches?e.touches[0].clientY:e.clientY;
-    startY=clientY;startTop=parseInt(el.style.top);dragging=false;
-    const onMove=(ev)=>{
-      const cy=ev.touches?ev.touches[0].clientY:ev.clientY;
-      const dy=cy-startY;
-      if(!dragging&&Math.abs(dy)>5){dragging=true;el.classList.add('dragging');}
-      if(!dragging)return;
-      ev.preventDefault();
-      const newTop=Math.max(0,Math.min(gh-parseInt(el.style.height),startTop+dy));
-      el.style.top=newTop+'px';
-    };
-    const onEnd=()=>{
-      document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onEnd);
-      document.removeEventListener('touchmove',onMove);document.removeEventListener('touchend',onEnd);
-      if(!dragging)return;
-      el.classList.remove('dragging');
-      // Snap to 15min
-      const newTop=parseInt(el.style.top);
-      const minsFromStart=(newTop/gh)*total+sm;
-      const snapped=Math.round(minsFromStart/15)*15;
-      const dur=pt(task.endTime||'10:00')-pt(task.startTime||'09:00');
-      const newStart=Math.max(sm,Math.min(em_glob()-dur,snapped));
-      const newEnd=newStart+dur;
-      if(S.tasks[key]&&S.tasks[key][idx]){
-        S.tasks[key][idx].startTime=ft(newStart);
-        S.tasks[key][idx].endTime=ft(newEnd);
-        sv();rGrid();
-      }
-    };
-    document.addEventListener('mousemove',onMove,{passive:false});document.addEventListener('mouseup',onEnd);
-    document.addEventListener('touchmove',onMove,{passive:false});document.addEventListener('touchend',onEnd);
-  };
-  el.addEventListener('mousedown',(e)=>{if(e.target.classList.contains('tchk'))return;onStart(e);});
-  el.addEventListener('touchstart',(e)=>{if(e.target.classList.contains('tchk'))return;onStart(e);},{passive:true});
-}
+
 function em_glob(){let e=pt(S.cfg.e||'00:00');if(e===0)e=1440;return e;}
 
 function togT(key,idx,isRecurring,origKey){
@@ -873,72 +834,69 @@ function bCtx(){
   return c+`\nПродукт. сегодня: ${gpct(td)}%`;
 }
 
-// ── TOOLS DEFINITION ──
+// ── AI TOOLS DEFINITION ──
 const AI_TOOLS = [
   {
     name: 'add_task',
-    description: 'Добавить одну или несколько задач в расписание. Используй когда пользователь просит добавить задачу, или когда видишь расписание на изображении.',
+    description: 'Add a single task/class/event to the schedule. For multiple tasks, call this tool multiple times.',
     input_schema: {
       type: 'object',
       properties: {
-        tasks: {
-          type: 'array',
-          description: 'Список задач для добавления',
-          items: {
-            type: 'object',
-            properties: {
-              date: {type:'string', description:'Дата в формате YYYY-MM-DD. Если не указана — используй выбранный день.'},
-              text: {type:'string', description:'Название задачи'},
-              startTime: {type:'string', description:'Время начала HH:MM'},
-              endTime: {type:'string', description:'Время окончания HH:MM'},
-              category: {type:'string', enum:['work','sport','study','rest','health','personal','other'], description:'Категория'},
-              icon: {type:'string', description:'Один эмодзи подходящий к задаче'},
-              color: {type:'string', description:'Цвет hex, например #3b82f6'},
-              notes: {type:'string', description:'Заметки (необязательно)'}
-            },
-            required: ['text','startTime','endTime']
-          }
-        }
+        date:      {type:'string', description:'Date YYYY-MM-DD'},
+        text:      {type:'string', description:'Task name in Russian'},
+        startTime: {type:'string', description:'Start time HH:MM (24h)'},
+        endTime:   {type:'string', description:'End time HH:MM (24h)'},
+        category:  {type:'string', enum:['work','sport','study','rest','health','personal','other']},
+        icon:      {type:'string', description:'Single emoji representing the task'}
       },
-      required: ['tasks']
+      required: ['date','text','startTime','endTime']
     }
   },
   {
     name: 'delete_task',
-    description: 'Удалить задачу из расписания',
+    description: 'Delete a task from the schedule',
     input_schema: {
-      type: 'object',
+      type:'object',
       properties: {
-        date: {type:'string', description:'Дата YYYY-MM-DD'},
-        task_id: {type:'string', description:'ID задачи из контекста'},
-        task_name: {type:'string', description:'Название задачи (если id неизвестен)'}
+        date:      {type:'string', description:'Date YYYY-MM-DD'},
+        task_name: {type:'string', description:'Task name (partial match ok)'}
       },
-      required: ['date']
+      required: ['date','task_name']
     }
   },
   {
     name: 'complete_task',
-    description: 'Отметить задачу выполненной или невыполненной',
+    description: 'Mark a task as done or undone',
     input_schema: {
-      type: 'object',
+      type:'object',
       properties: {
-        date: {type:'string', description:'Дата YYYY-MM-DD'},
-        task_id: {type:'string', description:'ID задачи'},
-        task_name: {type:'string', description:'Название задачи'},
-        done: {type:'boolean', description:'true = выполнена, false = не выполнена'}
+        date:      {type:'string', description:'Date YYYY-MM-DD'},
+        task_name: {type:'string'},
+        done:      {type:'boolean'}
       },
-      required: ['date','done']
+      required: ['date','task_name','done']
     }
   },
   {
     name: 'clear_day',
-    description: 'Очистить все задачи на указанный день',
+    description: 'Remove all tasks on a specific day',
     input_schema: {
-      type: 'object',
+      type:'object',
       properties: {
-        date: {type:'string', description:'Дата YYYY-MM-DD'}
+        date: {type:'string', description:'Date YYYY-MM-DD'}
       },
       required: ['date']
+    }
+  },
+  {
+    name: 'reply',
+    description: 'Reply to the user with a text message (use when NOT adding/editing tasks)',
+    input_schema: {
+      type:'object',
+      properties: {
+        message: {type:'string', description:'Your reply in Russian'}
+      },
+      required: ['message']
     }
   }
 ];
@@ -946,205 +904,416 @@ const AI_TOOLS = [
 // ── TOOL EXECUTION ──
 function execTool(name, input){
   const selDay = S.selDay || tdk();
-  if(name === 'add_task'){
-    const added=[];
-    (input.tasks||[]).forEach(t=>{
-      const date = t.date || selDay;
-      if(!S.tasks[date]) S.tasks[date]=[];
-      // Auto-pick color by category
-      const catColors={work:'#3b82f6',sport:'#22c55e',study:'#8b5cf6',rest:'#06b6d4',health:'#ef4444',personal:'#f59e0b',other:'#888888'};
-      const color = t.color || catColors[t.category||'other'] || COLORS[0];
-      const task={
-        id: Date.now()+Math.random(),
-        text: t.text,
-        icon: t.icon || guessIcon(t.text, t.category),
-        color,
-        category: t.category||'other',
-        startTime: t.startTime||'09:00',
-        endTime: t.endTime||'10:00',
-        notes: t.notes||'',
-        done: false,
-        repeat: 'none',
-        repeatDays: [],
-        originDate: date
-      };
-      S.tasks[date].push(task);
-      added.push(`"${task.icon} ${task.text}" ${task.startTime}–${task.endTime}`);
-    });
-    sv(); rGrid(); rMonth();
-    return `✅ Добавлено ${added.length} задач: ${added.join(', ')}`;
+  const catColors={work:'#3b82f6',sport:'#22c55e',study:'#8b5cf6',rest:'#06b6d4',health:'#ef4444',personal:'#f59e0b',other:'#888888'};
+
+  if(name === 'reply'){
+    // Special: just show text reply, no task modification
+    return {type:'reply', text: input.message||''};
   }
+
+  if(name === 'add_task'){
+    let date = (input.date||selDay).trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      console.warn('[execTool] bad date "'+date+'", using selDay '+selDay);
+      date = selDay;
+    }
+    let startTime = (input.startTime||'09:00').trim();
+    let endTime   = (input.endTime||'').trim();
+    if(!/^\d{2}:\d{2}$/.test(startTime)) startTime = '09:00';
+    if(!endTime || !/^\d{2}:\d{2}$/.test(endTime)) endTime = ft(pt(startTime)+100);
+    if(pt(endTime) <= pt(startTime)) endTime = ft(pt(startTime)+100);
+
+    if(!S.tasks[date]) S.tasks[date]=[];
+    const cat = input.category||'study';
+    const task = {
+      id: Date.now()+Math.random(),
+      text: input.text||'Задача',
+      icon: input.icon || guessIcon(input.text||'', cat),
+      color: catColors[cat]||catColors.study,
+      category: cat,
+      startTime, endTime,
+      notes:'', done:false,
+      repeat:'none', repeatDays:[], originDate:date
+    };
+    S.tasks[date].push(task);
+    sv(); rGrid(); rMonth();
+    console.log('[execTool] ✅ added "'+task.text+'" '+date+' '+startTime+'-'+endTime);
+    return {type:'task', text: task.icon+' '+task.text+' | '+date+' '+startTime+'–'+endTime};
+  }
+
   if(name === 'delete_task'){
-    const date = input.date || selDay;
+    const date = (input.date||selDay).trim();
     const tasks = S.tasks[date]||[];
-    let idx = -1;
-    if(input.task_id) idx = tasks.findIndex(t=>String(t.id)===String(input.task_id));
-    if(idx===-1 && input.task_name) idx = tasks.findIndex(t=>t.text.toLowerCase().includes(input.task_name.toLowerCase()));
-    if(idx===-1) return '❌ Задача не найдена';
-    const name2 = tasks[idx].text;
+    const idx = tasks.findIndex(t=>t.text.toLowerCase().includes((input.task_name||'').toLowerCase()));
+    if(idx===-1) return {type:'error', text:'Не найдено: '+input.task_name};
+    const n = tasks[idx].text;
     tasks.splice(idx,1);
     sv(); rGrid(); rMonth();
-    return `🗑️ Удалено: "${name2}"`;
+    return {type:'task', text:'🗑️ Удалено: '+n};
   }
+
   if(name === 'complete_task'){
-    const date = input.date || selDay;
+    const date = (input.date||selDay).trim();
     const tasks = S.tasks[date]||[];
-    let idx = -1;
-    if(input.task_id) idx = tasks.findIndex(t=>String(t.id)===String(input.task_id));
-    if(idx===-1 && input.task_name) idx = tasks.findIndex(t=>t.text.toLowerCase().includes(input.task_name.toLowerCase()));
-    if(idx===-1) return '❌ Задача не найдена';
+    const idx = tasks.findIndex(t=>t.text.toLowerCase().includes((input.task_name||'').toLowerCase()));
+    if(idx===-1) return {type:'error', text:'Не найдено: '+input.task_name};
     tasks[idx].done = input.done;
     sv(); rGrid(); rMonth();
-    return `${input.done?'✅':'↩️'} "${tasks[idx].text}" отмечена как ${input.done?'выполненная':'невыполненная'}`;
+    return {type:'task', text:(input.done?'✅':'↩️')+' '+tasks[idx].text};
   }
+
   if(name === 'clear_day'){
-    const date = input.date || selDay;
+    const date = (input.date||selDay).trim();
     const count = (S.tasks[date]||[]).length;
-    S.tasks[date] = [];
+    S.tasks[date]=[];
     sv(); rGrid(); rMonth();
-    return `🧹 Очищено ${count} задач за ${date}`;
+    return {type:'task', text:'🧹 Очищено '+count+' задач ('+date+')'};
   }
-  return '❓ Неизвестный инструмент';
+
+  return {type:'error', text:'Unknown tool: '+name};
 }
 
-// Guess icon from task text/category
+// ── GUESS ICON ──
 function guessIcon(text, cat){
-  const t = text.toLowerCase();
-  if(t.includes('лекц')||t.includes('пара')||t.includes('занят')) return '🎓';
-  if(t.includes('математ')||t.includes('физик')||t.includes('химия')) return '📐';
-  if(t.includes('английск')||t.includes('язык')) return '🗣️';
-  if(t.includes('програм')||t.includes('код')) return '💻';
-  if(t.includes('спорт')||t.includes('трениров')||t.includes('зал')) return '🏋️';
-  if(t.includes('встреч')||t.includes('созвон')) return '📞';
-  if(t.includes('еда')||t.includes('обед')||t.includes('завтрак')) return '🍳';
-  if(t.includes('сон')||t.includes('отдых')) return '😴';
-  if(t.includes('читать')||t.includes('книг')) return '📚';
+  const t=(text||'').toLowerCase();
+  if(t.includes('лекц')||t.includes('пара'))       return '🎓';
+  if(t.includes('матем'))                           return '📐';
+  if(t.includes('физик')&&!t.includes('физ.к'))    return '⚛️';
+  if(t.includes('физ.к')||t.includes('физкульт'))  return '🏃';
+  if(t.includes('англ')||t.includes('иностр'))     return '🌍';
+  if(t.includes('язык')&&!t.includes('иностр'))    return '🗣️';
+  if(t.includes('програм')||t.includes('код'))     return '💻';
+  if(t.includes('спорт')||t.includes('трен'))      return '🏋️';
+  if(t.includes('встреч')||t.includes('созвон'))   return '📞';
+  if(t.includes('обед')||t.includes('еда'))        return '🍳';
+  if(t.includes('сон')||t.includes('отдых'))       return '😴';
+  if(t.includes('книг')||t.includes('читать'))     return '📚';
+  if(t.includes('анализ'))                         return '📊';
+  if(t.includes('данн'))                           return '🗃️';
+  if(t.includes('оптимиз'))                        return '⚙️';
+  if(t.includes('электив'))                        return '🎯';
+  if(t.includes('практик'))                        return '🔬';
+  if(t.includes('эконом'))                         return '💰';
+  if(t.includes('систем'))                         return '🖥️';
+  if(t.includes('химия')||t.includes('хим'))       return '🧪';
+  if(t.includes('биолог'))                         return '🧬';
+  if(t.includes('истор'))                          return '🏛️';
+  if(t.includes('геograph')||t.includes('геогр'))  return '🗺️';
   const catIcons={work:'💼',sport:'🏃',study:'📚',rest:'😴',health:'💊',personal:'🧘',other:'📝'};
   return catIcons[cat||'other']||'📝';
 }
 
-// ── MSG RENDERING ──
-function onImgAttach(input){Array.from(input.files).forEach(f=>{const r=new FileReader();r.onload=e=>{const durl=e.target.result;pendingImages.push({base64:durl.split(',')[1],mediaType:f.type||'image/jpeg',previewUrl:durl});rImgP();};r.readAsDataURL(f);});input.value='';}
-function rImgP(){const w=document.getElementById('imgPreviews');w.innerHTML='';pendingImages.forEach((img,i)=>{const el=document.createElement('div');el.className='img-preview-wrap';el.innerHTML=`<img src="${img.previewUrl}" class="img-preview"><button class="img-preview-del" onclick="remImg(${i})">×</button>`;w.appendChild(el);});}
+// ── IMG ATTACH ──
+function onImgAttach(input){
+  Array.from(input.files).forEach(f=>{
+    const r=new FileReader();
+    r.onload=e=>{
+      const durl=e.target.result;
+      pendingImages.push({base64:durl.split(',')[1],mediaType:f.type||'image/jpeg',previewUrl:durl});
+      rImgP();
+    };
+    r.readAsDataURL(f);
+  });
+  input.value='';
+}
+function rImgP(){
+  const w=document.getElementById('imgPreviews');w.innerHTML='';
+  pendingImages.forEach((img,i)=>{
+    const el=document.createElement('div');el.className='img-preview-wrap';
+    el.innerHTML='<img src="'+img.previewUrl+'" class="img-preview">'
+      +'<button class="img-preview-del" onclick="remImg('+i+')">×</button>';
+    w.appendChild(el);
+  });
+}
 function remImg(i){pendingImages.splice(i,1);rImgP();}
 
-function addAIMsg(content, role, isImg=false){
+function addAIMsg(content, role, isImg){
   const d=document.getElementById('aiMsgs');
   const el=document.createElement('div');
-  el.className=`msg ${role}`;
-  if(isImg){el.innerHTML=`<img src="${content}" class="msg-img">`;}
-  else if(role==='tool'){
-    el.style.cssText='background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:12px;padding:8px 12px;font-size:12px;color:var(--success);align-self:stretch;';
+  if(isImg){
+    el.className='msg user';
+    el.innerHTML='<img src="'+content+'" class="msg-img">';
+  } else if(role==='tool'){
+    el.style.cssText='background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);'
+      +'border-radius:12px;padding:10px 14px;font-size:12px;color:var(--success);'
+      +'align-self:stretch;animation:fadeUp .3s ease;white-space:pre-wrap;line-height:1.6;';
+    el.textContent=content;
+  } else {
+    el.className='msg '+role;
     el.textContent=content;
   }
-  else{el.textContent=content;}
   d.appendChild(el);d.scrollTop=d.scrollHeight;return el;
 }
 
+function bCtx(){
+  const td=tdk(), ts=getTasksForDay(td), st=streak();
+  let c='Today: '+td+'. Streak: '+st+'. Selected: '+(S.selDay||td)+'.\n';
+  c+='Tasks today: '+(ts.length?ts.map(t=>'"'+t.text+'" '+t.startTime+'-'+t.endTime).join('; '):'none')+'.';
+  return c;
+}
+
+// ── SEND ──
 async function sendAI(){
-  if(aiLoad)return;
-  const inp=document.getElementById('aiInp');const text=inp.value.trim();
-  if(!text&&!pendingImages.length)return;
+  if(aiLoad) return;
+  const inp=document.getElementById('aiInp');
+  const text=inp.value.trim();
+  if(!text && !pendingImages.length) return;
   inp.value='';inp.style.height='auto';
+
   if(pendingImages.length) pendingImages.forEach(img=>addAIMsg(img.previewUrl,'user',true));
   if(text) addAIMsg(text,'user');
+
   const uc=[];
-  pendingImages.forEach(img=>uc.push({type:'image',source:{type:'base64',media_type:img.mediaType,data:img.base64}}));
-  if(text) uc.push({type:'text',text});
-  else uc.push({type:'text',text:'Посмотри на изображение. Если это расписание — добавь все занятия/задачи в календарь. Иначе опиши что видишь.'});
+  pendingImages.forEach(img=>uc.push({
+    type:'image',
+    source:{type:'base64',media_type:img.mediaType,data:img.base64}
+  }));
+
+  const userText = text || 'Look at this image. If it is a class/lecture schedule, add ALL classes using add_task tool. One tool call per class.';
+  uc.push({type:'text', text:userText});
+
   pendingImages=[];rImgP();
-  aiHistory.push({role:'user',content:uc});
+  aiHistory.push({role:'user', content:uc});
   await callAI();
 }
 
 function sendChip(el){
-  const t=el.textContent;addAIMsg(t,'user');
+  const t=el.textContent;
+  addAIMsg(t,'user');
   aiHistory.push({role:'user',content:[{type:'text',text:t}]});
   callAI();
 }
 
+function clearAIHistory(){
+  aiHistory=[];
+  document.getElementById('aiMsgs').innerHTML='<div class="msg ai">История очищена! Попробуй снова.</div>';
+}
+
+function debugTasks(){
+  const keys=Object.keys(S.tasks).filter(k=>(S.tasks[k]||[]).length>0).sort();
+  if(!keys.length){addAIMsg('Расписание пустое — задач нет.','ai');return;}
+  const lines=['📋 В расписании:'];
+  keys.slice(-7).forEach(k=>{
+    const ts=S.tasks[k];
+    const d=new Date(k+'T12:00:00');
+    lines.push(DRRU[d.getDay()]+' '+k+' ('+ts.length+'):');
+    ts.forEach(t=>lines.push('  '+t.icon+' '+t.text+' '+t.startTime+'–'+t.endTime));
+  });
+  addAIMsg(lines.join('\n'),'ai');
+}
+
+// ── CALL AI ──
 async function callAI(){
-  aiLoad=true;document.getElementById('btnSnd').disabled=true;
+  aiLoad=true;
+  document.getElementById('btnSnd').disabled=true;
   const ld=addAIMsg('Думаю…','ai loading');
-  const SYSTEM=`Ты умный AI-ассистент встроенный в приложение-расписание. Ты можешь добавлять, удалять и отмечать задачи напрямую.
 
-КОНТЕКСТ ПОЛЬЗОВАТЕЛЯ:
-${bCtx()}
+  const lastUserMsg = aiHistory[aiHistory.length-1];
+  const hasImage = lastUserMsg && Array.isArray(lastUserMsg.content)
+    && lastUserMsg.content.some(b=>b.type==='image');
 
-ПРАВИЛА:
-- Если пользователь просит добавить задачу — СРАЗУ вызывай add_task без лишних вопросов
-- Если видишь фото расписания (пары, уроки, встречи) — извлеки ВСЕ занятия и добавь их через add_task
-- Для пар в университете: категория "study", иконка по предмету
-- Если дата не указана — используй выбранный день (${S.selDay||tdk()})
-- После выполнения действия кратко сообщи что сделал
-- Отвечай на русском, коротко и по делу
-- Для времени используй формат HH:MM (24ч)`;
+  const mon = S.selWeek ? S.selWeek.start : wkStart(0);
+  const wmap=[];
+  gdw(mon).forEach(d=>wmap.push(DRRU[d.getDay()]+'='+dk(d)));
+  const selDayStr = S.selDay||tdk();
 
   try{
-    let messages = aiHistory.slice();
-    let response, fullReply='', toolsUsed=[];
-
-    // Agentic loop — AI может вызвать несколько инструментов подряд
-    for(let step=0; step<5; step++){
-      const res=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          model:'claude-sonnet-4-20250514',
-          max_tokens:2000,
-          system:SYSTEM,
-          tools:AI_TOOLS,
-          tool_choice:{type:'auto'},
-          messages
-        })
-      });
-      response=await res.json();
-      if(response.error){ld.textContent='Ошибка API: '+response.error.message;break;}
-
-      // Collect text from response
-      const textBlocks=response.content.filter(b=>b.type==='text');
-      if(textBlocks.length) fullReply=textBlocks.map(b=>b.text).join(' ');
-
-      // Check for tool use
-      const toolBlocks=response.content.filter(b=>b.type==='tool_use');
-      if(!toolBlocks.length || response.stop_reason==='end_turn') break;
-
-      // Execute tools
-      messages.push({role:'assistant',content:response.content});
-      const toolResults=[];
-      toolBlocks.forEach(tb=>{
-        const result=execTool(tb.name, tb.input);
-        toolsUsed.push(result);
-        toolResults.push({type:'tool_result',tool_use_id:tb.id,content:result});
-      });
-      messages.push({role:'user',content:toolResults});
+    // ── BRANCH A: Image present → extract JSON directly, no tools ──
+    if(hasImage){
+      await callAI_image(ld, wmap, selDayStr);
+    } else {
+    // ── BRANCH B: Text only → use tools normally ──
+      await callAI_text(ld, wmap, selDayStr);
     }
-
-    // Show tool results in chat
-    if(toolsUsed.length){
-      ld.remove();
-      toolsUsed.forEach(r=>addAIMsg(r,'tool'));
-    }
-
-    // Show final text reply
-    if(fullReply){
-      if(toolsUsed.length) addAIMsg(fullReply,'ai');
-      else{ld.textContent=fullReply;ld.classList.remove('loading');}
-    } else if(!toolsUsed.length){
-      ld.textContent='Готово!';ld.classList.remove('loading');
-    }
-
-    // Save to history (keep last 16 messages)
-    aiHistory=messages.slice(-(16));
-    aiHistory.push({role:'assistant',content:[{type:'text',text:fullReply||'OK'}]});
-    if(aiHistory.length>20) aiHistory=aiHistory.slice(-20);
-
   }catch(e){
-    ld.textContent='Ошибка соединения: '+e.message;
-    console.error(e);
+    console.error('[callAI]',e);
+    ld.textContent='⚠️ Ошибка: '+e.message;
+    ld.classList.remove('loading');
   }
-  aiLoad=false;document.getElementById('btnSnd').disabled=false;
+
+  aiLoad=false;
+  document.getElementById('btnSnd').disabled=false;
   document.getElementById('aiMsgs').scrollTop=9999;
 }
+
+// ── IMAGE PATH: ask AI to return JSON, then add tasks in JS ──
+async function callAI_image(ld, wmap, selDayStr){
+  const prompt =
+    'You are parsing a university schedule image. Extract ALL classes/events and return ONLY a JSON array, no other text.\n'
+   +'Format: [{"date":"YYYY-MM-DD","text":"class name in Russian","startTime":"HH:MM","endTime":"HH:MM","category":"study"}]\n'
+   +'Week map (use these exact dates): '+wmap.join(', ')+'.\n'
+   +'University pair duration = 1h40min if end time not shown.\n'
+   +'Return ONLY the JSON array. No markdown, no explanation. If no schedule found, return [].\n';
+
+  // Build messages: just the image + instruction (keep it minimal)
+  const lastMsg = aiHistory[aiHistory.length-1];
+  const imageBlocks = lastMsg.content.filter(b=>b.type==='image');
+
+  const res = await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model:'claude-sonnet-4-20250514',
+      max_tokens:4096,
+      messages:[{
+        role:'user',
+        content:[
+          ...imageBlocks,
+          {type:'text', text: prompt}
+        ]
+      }]
+    })
+  });
+
+  if(!res.ok){
+    const t=await res.text().catch(()=>'');
+    if(res.status===429) ld.textContent='⚠️ Лимит AI исчерпан. Подожди минуту.';
+    else ld.textContent='⚠️ Ошибка '+res.status+': '+t.slice(0,80);
+    ld.classList.remove('loading');
+    return;
+  }
+
+  const resp = await res.json();
+  console.log('[callAI_image] stop='+resp.stop_reason+' types='+JSON.stringify((resp.content||[]).map(b=>b.type)));
+
+  if(resp.error){ ld.textContent='⚠️ '+resp.error.message; ld.classList.remove('loading'); return; }
+
+  const rawText = (resp.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+  console.log('[callAI_image] raw response:', rawText.slice(0,300));
+
+  // Parse JSON — strip markdown fences if present
+  let tasks=[];
+  try{
+    const clean = rawText.replace(/```json|```/g,'').trim();
+    tasks = JSON.parse(clean);
+    if(!Array.isArray(tasks)) tasks=[];
+  }catch(e){
+    console.error('[callAI_image] JSON parse error:', e.message, rawText.slice(0,200));
+    ld.textContent='⚠️ Не удалось распознать расписание. Попробуй другое фото.';
+    ld.classList.remove('loading');
+    return;
+  }
+
+  if(!tasks.length){
+    ld.textContent='Расписание не найдено на изображении.';
+    ld.classList.remove('loading');
+    return;
+  }
+
+  // Add all tasks directly
+  const added=[];
+  const catColors={work:'#3b82f6',sport:'#22c55e',study:'#8b5cf6',rest:'#06b6d4',health:'#ef4444',personal:'#f59e0b',other:'#888888'};
+  tasks.forEach(t=>{
+    let date=(t.date||selDayStr).trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) date=selDayStr;
+    let startTime=(t.startTime||'09:00').trim();
+    let endTime=(t.endTime||'').trim();
+    if(!/^\d{2}:\d{2}$/.test(startTime)) startTime='09:00';
+    if(!endTime||!/^\d{2}:\d{2}$/.test(endTime)) endTime=ft(pt(startTime)+100);
+    if(pt(endTime)<=pt(startTime)) endTime=ft(pt(startTime)+100);
+    if(!S.tasks[date]) S.tasks[date]=[];
+    const cat=t.category||'study';
+    const task={
+      id:Date.now()+Math.random(),
+      text:t.text||'Пара',
+      icon:t.icon||guessIcon(t.text||'',cat),
+      color:catColors[cat]||catColors.study,
+      category:cat,
+      startTime,endTime,
+      notes:'',done:false,
+      repeat:'none',repeatDays:[],originDate:date
+    };
+    S.tasks[date].push(task);
+    added.push(task.icon+' '+task.text+' | '+date+' '+startTime+'–'+endTime);
+    console.log('[image] added:',task.text,date,startTime);
+  });
+
+  sv(); rGrid(); rMonth();
+
+  ld.remove();
+  addAIMsg('✅ Добавлено '+added.length+' занятий:\n'+added.join('\n'),'tool');
+
+  // Keep image message in history with a summary
+  aiHistory.push({role:'assistant',content:[{type:'text',text:'Добавил '+added.length+' занятий из расписания.'}]});
+  if(aiHistory.length>16) aiHistory=aiHistory.slice(-16);
+}
+
+// ── TEXT PATH: use tools for text commands ──
+async function callAI_text(ld, wmap, selDayStr){
+  const SYSTEM =
+    'You are a schedule assistant. ALWAYS call one of the provided tools — never reply with plain text.\n'
+   +'Use "reply" tool for text responses. Use "add_task" for adding tasks (one call per task).\n'
+   +'Today: '+tdk()+'. Selected: '+selDayStr+'.\n'
+   +'Week: '+wmap.join(', ')+'.\n'
+   +'Reply in Russian.\n'
+   +'Context: '+bCtx();
+
+  const messages = aiHistory.slice(-8);
+  const taskResults=[];
+  let replyText='';
+
+  for(let step=0;step<20;step++){
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:2048,
+        system:SYSTEM,
+        tools:AI_TOOLS,
+        tool_choice:{type:'any'},
+        messages:messages
+      })
+    });
+
+    if(!res.ok){
+      const t=await res.text().catch(()=>'');
+      if(res.status===429) ld.textContent='⚠️ Лимит AI. Подожди минуту.';
+      else ld.textContent='⚠️ Ошибка '+res.status;
+      ld.classList.remove('loading');
+      return;
+    }
+
+    const resp=await res.json();
+    console.log('[callAI_text] step='+step+' stop='+resp.stop_reason+' types='+JSON.stringify((resp.content||[]).map(b=>b.type)));
+
+    if(resp.error){ ld.textContent='⚠️ '+resp.error.message; ld.classList.remove('loading'); return; }
+
+    const blocks=resp.content||[];
+    const toolBlocks=blocks.filter(b=>b.type==='tool_use');
+
+    if(!toolBlocks.length){
+      replyText=blocks.filter(b=>b.type==='text').map(b=>b.text).join(' ')||'Готово!';
+      break;
+    }
+
+    messages.push({role:'assistant',content:blocks});
+    const results=[];
+    let done=false;
+
+    for(const tb of toolBlocks){
+      console.log('[Tool]',tb.name,JSON.stringify(tb.input).slice(0,100));
+      const r=execTool(tb.name,tb.input);
+      if(r.type==='reply'){replyText=r.text;done=true;}
+      else taskResults.push(r.text);
+      results.push({type:'tool_result',tool_use_id:tb.id,content:r.text});
+    }
+    messages.push({role:'user',content:results});
+
+    if(done&&!taskResults.length) break;
+    if(resp.stop_reason==='end_turn') break;
+    if(resp.stop_reason==='tool_use') continue;
+    break;
+  }
+
+  aiHistory=messages.slice(-12);
+
+  ld.remove();
+  if(taskResults.length) addAIMsg('✅ '+taskResults.length+' задач:\n'+taskResults.join('\n'),'tool');
+  if(replyText) addAIMsg(replyText,'ai');
+  else if(!taskResults.length) addAIMsg('Готово!','ai');
+}
+
 
 function autoR(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,90)+'px';}
 
@@ -1215,7 +1384,11 @@ function exportPDF(){
 const SCR=['sMonth','sWeek','sAI','sStats'],TABS=['t0','t1','t2','t3'];let curTab=0;
 function swTab(i){
   SCR.forEach((s,j)=>{document.getElementById(s).classList.toggle('active',j===i);document.getElementById(TABS[j]).classList.toggle('active',j===i);});
-  curTab=i;document.getElementById('btnBack').style.display='none';document.getElementById('fab').style.display=i===1?'flex':'none';
+  curTab=i;document.getElementById('btnBack').style.display='none';
+  document.getElementById('fab').style.display=i===1?'flex':'none';
+  // Templates + Settings only on Day tab
+  document.getElementById('topBtnTpl').style.display=i===1?'flex':'none';
+  document.getElementById('topBtnCfg').style.display=i===1?'flex':'none';
   if(i===0){document.getElementById('ttitle').textContent='Расписание';rMonth();}
   if(i===1)rWeek();
   if(i===2)document.getElementById('ttitle').textContent='AI Ассистент';
@@ -1226,13 +1399,85 @@ function openModal(id){if(id==='mTemplates')rTemplates();document.getElementById
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.moverlay').forEach(el=>{el.addEventListener('click',e=>{if(e.target===el)el.classList.remove('open');});});
 
+// ── TELEGRAM CLOUD STORAGE SYNC ──
+const TgCloud = window.Telegram?.WebApp?.CloudStorage;
+
+async function cloudSave(){
+  if(!TgCloud) return;
+  try{
+    const data=JSON.stringify({tasks:S.tasks,cfg:S.cfg,templates:S.templates});
+    // CloudStorage has 1024 char limit per key, so chunk if needed
+    const chunks=[];
+    for(let i=0;i<data.length;i+=900) chunks.push(data.slice(i,i+900));
+    TgCloud.setItem('sch_chunks', String(chunks.length));
+    for(let i=0;i<chunks.length;i++){
+      await new Promise(r=>TgCloud.setItem('sch_c'+i, chunks[i], r));
+    }
+  }catch(e){ console.warn('CloudStorage save error',e); }
+}
+
+async function cloudLoad(){
+  if(!TgCloud) return false;
+  try{
+    return await new Promise(resolve=>{
+      TgCloud.getItem('sch_chunks',(err,val)=>{
+        if(err||!val){resolve(false);return;}
+        const n=parseInt(val)||0;
+        if(!n){resolve(false);return;}
+        let loaded='';
+        let done=0;
+        for(let i=0;i<n;i++){
+          TgCloud.getItem('sch_c'+i,(err2,chunk)=>{
+            loaded+=chunk||'';
+            done++;
+            if(done===n){
+              try{
+                const d=JSON.parse(loaded);
+                if(d.tasks) S.tasks=d.tasks;
+                if(d.cfg) S.cfg=d.cfg;
+                if(d.templates) S.templates=d.templates;
+                resolve(true);
+              }catch(e2){resolve(false);}
+            }
+          });
+        }
+      });
+    });
+  }catch(e){ return false; }
+}
+
+// Override sv() to also sync to cloud
+const _svOrig = sv;
+function sv(){
+  localStorage.setItem('sch4',JSON.stringify({tasks:S.tasks,cfg:S.cfg,templates:S.templates}));
+  cloudSave(); // async, fire and forget
+}
+
 // ── INIT ──
 document.getElementById('sStart').value=S.cfg.s||'06:00';
 document.getElementById('sEnd').value=S.cfg.e||'00:00';
-const ni=new Date(),ws2=gwom(ni.getFullYear(),ni.getMonth()),tdi=new Date();tdi.setHours(0,0,0,0);
-S.selWeek=ws2.find(w=>gdw(w.start).some(d=>{const dd=new Date(d);dd.setHours(0,0,0,0);return dd.getTime()===tdi.getTime();}))||ws2[0];
-S.selDay=tdk();
-rMonth();
+
+// Prevent Telegram from closing the app when scrolling to top
+if(window.Telegram?.WebApp){
+  // Disable vertical swipe to close
+  try{ window.Telegram.WebApp.disableVerticalSwipes(); }catch(e){}
+  // Confirm before closing
+  try{ window.Telegram.WebApp.enableClosingConfirmation(); }catch(e){}
+}
+
+async function init(){
+  // Try load from cloud first (synced across devices), fall back to localStorage
+  const fromCloud = await cloudLoad();
+  if(fromCloud){
+    document.getElementById('sStart').value=S.cfg.s||'06:00';
+    document.getElementById('sEnd').value=S.cfg.e||'00:00';
+  }
+  const ni=new Date(),ws2=gwom(ni.getFullYear(),ni.getMonth()),tdi=new Date();tdi.setHours(0,0,0,0);
+  S.selWeek=ws2.find(w=>gdw(w.start).some(d=>{const dd=new Date(d);dd.setHours(0,0,0,0);return dd.getTime()===tdi.getTime();}))||ws2[0];
+  S.selDay=tdk();
+  rMonth();
+}
+init();
 </script>
 </body>
 </html>

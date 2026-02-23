@@ -26,7 +26,7 @@
 body{background:var(--bg);color:var(--text);font-family:var(--font-b);min-height:100vh;overflow-x:hidden;}
 
 /* TOPBAR */
-.topbar{position:sticky;top:0;z-index:100;background:var(--bg);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:8px;}
+.topbar{position:sticky;top:0;z-index:100;background:var(--bg);border-bottom:1px solid var(--border);padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));display:flex;align-items:center;gap:8px;}
 .topbar-title{font-family:var(--font-d);font-size:12px;font-weight:600;letter-spacing:.05em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .btn-ic{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;width:34px;height:34px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s;flex-shrink:0;}
 .btn-ic:active{background:var(--border);}
@@ -697,7 +697,7 @@ function rColors(){const r=document.getElementById('crow');r.innerHTML='';COLORS
 function onName(v){clearTimeout(iconTimer);if(!v.trim()){document.getElementById('aiIconRow').innerHTML='<span class="ai-ic-hint">Введи название — AI предложит</span>';return;}iconTimer=setTimeout(()=>suggestIcons(v),700);}
 async function suggestIcons(name){
   const row=document.getElementById('aiIconRow');row.innerHTML='<span class="ai-ic-load">🤖 Подбираю...</span>';
-  try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:200,messages:[{role:'user',content:`Задача: "${name}". Выбери 6 подходящих эмодзи из: ${ICONS.join(' ')}. Только 6 эмодзи через пробел.`}]})});
+  try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:200,messages:[{role:'user',content:`Задача: "${name}". Выбери 6 подходящих эмодзи из: ${ICONS.join(' ')}. Только 6 эмодзи через пробел.`}]})});
     const data=await res.json();const text=data.content?.[0]?.text||'';
     const re=/\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
     const sugg=[...new Set(text.match(re)||[])].filter(e=>ICONS.includes(e)).slice(0,6);
@@ -1151,7 +1151,7 @@ async function callAI_image(ld, wmap, selDayStr){
 
   const res = await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
     body: JSON.stringify({
       model:'claude-sonnet-4-20250514',
       max_tokens:4096,
@@ -1255,7 +1255,7 @@ async function callAI_text(ld, wmap, selDayStr){
   for(let step=0;step<20;step++){
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:2048,
@@ -1452,6 +1452,24 @@ function sv(){
   localStorage.setItem('sch4',JSON.stringify({tasks:S.tasks,cfg:S.cfg,templates:S.templates}));
   cloudSave(); // async, fire and forget
 }
+
+// ── TELEGRAM SAFE AREA ──
+(function(){
+  const tg = window.Telegram?.WebApp;
+  if(!tg) return;
+  // Telegram provides safeAreaInsets and contentSafeAreaInsets
+  const applyPadding = () => {
+    const top = (tg.safeAreaInsets?.top || 0) + (tg.contentSafeAreaInsets?.top || 0);
+    if(top > 0){
+      document.querySelector('.topbar').style.paddingTop = (top + 8) + 'px';
+    }
+  };
+  applyPadding();
+  tg.onEvent('safeAreaChanged', applyPadding);
+  tg.onEvent('contentSafeAreaChanged', applyPadding);
+  // Also expand to full height
+  try{ tg.expand(); } catch(e){}
+})();
 
 // ── INIT ──
 document.getElementById('sStart').value=S.cfg.s||'06:00';

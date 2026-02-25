@@ -6,7 +6,7 @@
 <title>Schedule</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <style>
+<style>
 @import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;700&family=Golos+Text:wght@400;500;600&display=swap');
 :root {
   --bg: var(--tg-theme-bg-color, #0f0f0f);
@@ -466,7 +466,7 @@ select.inp{appearance:none;}
 </div>
 
 <script>
-const WORKER_URL='https://snowy-haze-7625.afasdfaadsfd.workers.dev'; // ← вставь URL своего Worker
+const WORKER_URL='https://YOUR_WORKER.YOUR_SUBDOMAIN.workers.dev'; // ← вставь URL своего Worker
 // API ключ больше не хранится во фронтенде — он в Cloudflare Worker
 
 const tg=window.Telegram?.WebApp;
@@ -1121,16 +1121,22 @@ async function aiRequest(payload){
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ tgId: String(tgId||''), payload })
   });
+  const data = await res.json().catch(()=>({error:{message:'Invalid response'}}));
   if(!res.ok){
-    const err = await res.json().catch(()=>({}));
-    if(res.status===403 && err.error==='no_access'){
-      // Показываем экран оплаты
+    if(res.status===403 && data.error==='no_access'){
       showPaywall();
       throw new Error('no_access');
     }
-    throw new Error('HTTP '+res.status);
+    // Return a fake Response-like object with the error data so callers can handle it
+    throw new Error('HTTP '+res.status+': '+(data.error?.message||JSON.stringify(data).slice(0,100)));
   }
-  return res;
+  // Return a fake Response object that behaves like fetch Response
+  return {
+    ok: true,
+    status: 200,
+    json: async () => data,
+    text: async () => JSON.stringify(data)
+  };
 }
 
 function showPaywall(){
@@ -1252,14 +1258,6 @@ async function callAI_image(ld, wmap, selDayStr){
         ]
       }]
     });
-
-  if(!res.ok){
-    const t=await res.text().catch(()=>'');
-    if(res.status===429) ld.textContent='⚠️ Лимит AI исчерпан. Подожди минуту.';
-    else ld.textContent='⚠️ Ошибка '+res.status+': '+t.slice(0,80);
-    ld.classList.remove('loading');
-    return;
-  }
 
   const resp = await res.json();
   console.log('[callAI_image] stop='+resp.stop_reason+' types='+JSON.stringify((resp.content||[]).map(b=>b.type)));
